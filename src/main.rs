@@ -1,0 +1,44 @@
+mod config;
+mod event;
+mod pen;
+mod ssh;
+mod touch;
+
+use std::path::Path;
+use std::thread;
+use std::time::Duration;
+
+fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+
+    log::info!("rm-mouse starting (host={}, pen={}, touch={})", config::HOST, config::PEN_DEVICE, config::TOUCH_DEVICE);
+
+    let key_path = Path::new(config::KEY_PATH);
+    let key_pen = key_path.to_path_buf();
+    let key_touch = key_path.to_path_buf();
+
+    let pen_handle = thread::spawn(move || {
+        loop {
+            log::info!("[pen] thread starting…");
+            if let Err(e) = pen::run(&key_pen) {
+                log::error!("[pen] {}", e);
+            }
+            log::warn!("[pen] disconnected, reconnecting in 2s…");
+            thread::sleep(Duration::from_secs(2));
+        }
+    });
+    let touch_handle = thread::spawn(move || {
+        loop {
+            log::info!("[touch] thread starting…");
+            if let Err(e) = touch::run(&key_touch) {
+                log::error!("[touch] {}", e);
+            }
+            log::warn!("[touch] disconnected, reconnecting in 2s…");
+            thread::sleep(Duration::from_secs(2));
+        }
+    });
+
+    pen_handle.join().unwrap();
+    touch_handle.join().unwrap();
+    Ok(())
+}
