@@ -11,14 +11,15 @@ use ssh2::Session;
 use crate::config::{Auth, Config};
 
 const USER: &str = "root";
-/// Shell command template that sets up a trap FIRST (to guarantee cleanup), stops xochitl service, then cats the device.
-/// Using systemctl stop/start instead of kill -STOP/-CONT to avoid triggering the system watchdog.
-/// When the SSH connection dies for any reason (network timeout, Ctrl+C, laptop crash), the trap fires
-/// and restarts xochitl. {} is the device path.
-const CAT_WITH_TRAP_CMD: &str = "trap 'systemctl start xochitl' EXIT; systemctl stop xochitl; cat {}";
+/// Shell command template that:
+/// 1. Sets up a trap to kill the stopper and resume xochitl (CONT) on exit
+/// 2. Spawns a background loop that keeps freezing xochitl with STOP (handles PID changes if watchdog restarts it)
+/// 3. Runs cat in foreground
+/// This approach doesn't write anything to disk. {} is the device path.
+const CAT_WITH_TRAP_CMD: &str = "trap 'kill $STOPPER 2>/dev/null; kill -CONT $(pidof xochitl) 2>/dev/null' EXIT; (while true; do kill -STOP $(pidof xochitl) 2>/dev/null; sleep 1; done) & STOPPER=$!; sleep 0.5; cat {}";
 /// Plain cat command for when stop_ui is not used.
 const CAT_CMD: &str = "cat {}";
-const XOCHITL_RESUME_CMD: &str = "systemctl start xochitl";
+const XOCHITL_RESUME_CMD: &str = "kill -CONT $(pidof xochitl) 2>/dev/null";
 
 fn authenticate(sess: &mut Session, auth: &Auth) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     match auth {
