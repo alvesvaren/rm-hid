@@ -1,140 +1,179 @@
 mod config;
+mod device;
 mod dump;
-mod event;
+mod input;
 mod palm;
-mod pen;
 mod ssh;
-mod touch;
 
+use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
-fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let args: Vec<String> = std::env::args().collect();
+use clap::Parser;
 
-    if args.get(1).map(|s| s.as_str()) == Some("dump") {
-        env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
-        let cfg = config::load();
-        match args.get(2).map(|s| s.as_str()) {
-            Some("touch") => return dump::run_dump_touch(&cfg),
-            Some("pen") => return dump::run_dump_pen(&cfg),
-            _ => {
-                eprintln!("Usage: {} dump <touch|pen>", args.get(0).unwrap_or(&"rm-mouse".into()));
-                eprintln!("  Streams and prints raw input events from the reMarkable for debugging.");
-                std::process::exit(1);
-            }
-        }
+use config::{Cli, Command, Config};
+use device::DeviceProfile;
+use palm::{PalmState, SharedPalmState};
+
+type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
+
+fn main() -> Result<()> {
+    let cli = Cli::parse();
+    let device = DeviceProfile::current();
+    let config = Config::load(&cli, device);
+
+    init_logging(cli.command.is_some());
+
+    if let Some(command) = cli.command {
+        return run_subcommand(command, &config);
     }
 
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
-    let mut cfg = config::load();
-
-    // CLI overrides (same flags as before)
-    if args.iter().any(|a| a == "--touch-only") {
-        cfg.touch_only = true;
-    }
-    if args.iter().any(|a| a == "--pen-only") {
-        cfg.pen_only = true;
-    }
-    if args.iter().any(|a| a == "--stop-ui") {
-        cfg.stop_ui = true;
-    }
-    if args.iter().any(|a| a == "--no-stop-ui") {
-        cfg.stop_ui = false;
-    }
-    if args.iter().any(|a| a == "--no-palm-rejection") {
-        cfg.no_palm_rejection = true;
-    }
-    if let Some(s) = args.iter().find_map(|a| a.strip_prefix("--palm-grace-ms=")) {
-        if let Ok(n) = s.parse::<u64>() {
-            cfg.palm_grace_ms = n;
-        }
-    }
-
-    let stop_ui = cfg.stop_ui;
-    let run_pen = !cfg.touch_only;
-    let run_touch = !cfg.pen_only;
-
-    let palm_state: Option<palm::SharedPalmState> =
-        if run_pen && run_touch && !cfg.no_palm_rejection {
-            Some(Arc::new(std::sync::Mutex::new(palm::PalmState::new())))
-        } else {
-            None
-        };
-
-    log::info!(
-        "rm-mouse starting (host={}, pen={}, touch={}, palm_rejection={}, stop_ui={})",
-        cfg.host,
-        if run_pen { cfg.pen_device.as_str() } else { "off" },
-        if run_touch { cfg.touch_device.as_str() } else { "off" },
-        if palm_state.is_some() {
-            format!("on (grace {}ms)", cfg.palm_grace_ms)
-        } else {
-            "off".into()
-        },
-        stop_ui
-    );
-
-    if !run_pen && !run_touch {
-        eprintln!(
-            "Usage: {} [--pen-only] [--touch-only] [--stop-ui] [--no-stop-ui] [--no-palm-rejection] [--palm-grace-ms=N]",
-            args.get(0).unwrap_or(&"rm-mouse".into())
-        );
-        eprintln!("  Config file: RMMOUSE_CONFIG, ./rm-mouse.toml, or ~/.config/rm-mouse/config.toml");
+    if let Err(msg) = config.validate() {
+        eprintln!("Error: {}", msg);
+        eprintln!("\nRun with --help for usage information");
         std::process::exit(1);
     }
 
-    let config = Arc::new(cfg);
-    let pause_refcount = if stop_ui && (run_pen || run_touch) {
-        Some(Arc::new(std::sync::atomic::AtomicUsize::new(0)))
-    } else {
-        None
-    };
+    log_startup_info(&config);
+    run_input_forwarding(config, device)
+}
 
-    let pen_handle = if run_pen {
-        let config_pen = config.clone();
-        let palm_pen = palm_state.clone();
-        let pause_ref = pause_refcount.clone();
-        Some(thread::spawn(move || {
-            loop {
-                log::info!("[pen] thread starting…");
-                if let Err(e) = pen::run(&config_pen, palm_pen.clone(), pause_ref.clone()) {
-                    log::error!("[pen] {}", e);
-                }
-                log::warn!("[pen] disconnected, reconnecting in 2s…");
-                thread::sleep(Duration::from_secs(2));
+fn init_logging(is_dump: bool) {
+    let default_level = if is_dump { "warn" } else { "info" };
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(default_level)).init();
+}
+
+fn run_subcommand(command: Command, config: &Config) -> Result<()> {
+    match command {
+        Command::Dump { device } => match device.as_str() {
+            "touch" => dump::run_touch(config),
+            "pen" => dump::run_pen(config),
+            _ => {
+                eprintln!("Unknown dump device: {}. Use 'touch' or 'pen'.", device);
+                std::process::exit(1);
             }
-        }))
+        },
+    }
+}
+
+fn log_startup_info(config: &Config) {
+    let palm_info = if config.no_palm_rejection {
+        "off".into()
     } else {
-        None
+        format!("on (grace {}ms)", config.palm_grace_ms)
     };
 
-    let touch_handle = if run_touch {
-        let config_touch = config.clone();
-        let palm_touch = palm_state.clone();
-        let grace = config.palm_grace_ms;
-        let pause_ref = pause_refcount.clone();
-        Some(thread::spawn(move || {
-            loop {
-                log::info!("[touch] thread starting…");
-                if let Err(e) = touch::run(&config_touch, palm_touch.clone(), grace, pause_ref.clone()) {
-                    log::error!("[touch] {}", e);
-                }
-                log::warn!("[touch] disconnected, reconnecting in 2s…");
-                thread::sleep(Duration::from_secs(2));
-            }
-        }))
-    } else {
-        None
-    };
+    log::info!(
+        "Starting rm-mouse: host={}, pen={}, touch={}, palm_rejection={}, stop_ui={}",
+        config.host,
+        if config.run_pen() { &config.pen_device } else { "off" },
+        if config.run_touch() { &config.touch_device } else { "off" },
+        palm_info,
+        config.stop_ui
+    );
+}
 
-    if let Some(h) = pen_handle {
+fn run_input_forwarding(config: Config, device: &'static DeviceProfile) -> Result<()> {
+    let palm_state = create_palm_state(&config);
+    let pause_refcount = create_pause_refcount(&config);
+    let config = Arc::new(config);
+
+    let pen_handle = spawn_pen_thread(&config, device, &palm_state, &pause_refcount);
+    let touch_handle = spawn_touch_thread(&config, device, &palm_state, &pause_refcount);
+
+    join_threads(pen_handle, touch_handle)
+}
+
+fn create_palm_state(config: &Config) -> Option<SharedPalmState> {
+    if config.no_palm_rejection {
+        return None;
+    }
+    if !config.run_pen() || !config.run_touch() {
+        return None;
+    }
+
+    Some(Arc::new(std::sync::Mutex::new(PalmState::new())))
+}
+
+fn create_pause_refcount(config: &Config) -> Option<Arc<AtomicUsize>> {
+    if !config.stop_ui {
+        return None;
+    }
+    if !config.run_pen() && !config.run_touch() {
+        return None;
+    }
+
+    Some(Arc::new(AtomicUsize::new(0)))
+}
+
+fn spawn_pen_thread(
+    config: &Arc<Config>,
+    device: &'static DeviceProfile,
+    palm_state: &Option<SharedPalmState>,
+    pause_refcount: &Option<Arc<AtomicUsize>>,
+) -> Option<thread::JoinHandle<()>> {
+    if !config.run_pen() {
+        return None;
+    }
+
+    let config = config.clone();
+    let palm = palm_state.clone();
+    let pause = pause_refcount.clone();
+
+    Some(thread::spawn(move || {
+        run_with_reconnect("pen", || {
+            input::run_pen(&config, device, palm.clone(), pause.clone())
+        });
+    }))
+}
+
+fn spawn_touch_thread(
+    config: &Arc<Config>,
+    device: &'static DeviceProfile,
+    palm_state: &Option<SharedPalmState>,
+    pause_refcount: &Option<Arc<AtomicUsize>>,
+) -> Option<thread::JoinHandle<()>> {
+    if !config.run_touch() {
+        return None;
+    }
+
+    let config = config.clone();
+    let palm = palm_state.clone();
+    let pause = pause_refcount.clone();
+
+    Some(thread::spawn(move || {
+        run_with_reconnect("touch", || {
+            input::run_touch(&config, device, palm.clone(), pause.clone())
+        });
+    }))
+}
+
+fn run_with_reconnect<F>(name: &str, mut run_fn: F)
+where
+    F: FnMut() -> Result<()>,
+{
+    loop {
+        log::info!("[{}] Starting", name);
+
+        if let Err(e) = run_fn() {
+            log::error!("[{}] Error: {}", name, e);
+        }
+
+        log::warn!("[{}] Disconnected, reconnecting in 2s", name);
+        thread::sleep(Duration::from_secs(2));
+    }
+}
+
+fn join_threads(
+    pen: Option<thread::JoinHandle<()>>,
+    touch: Option<thread::JoinHandle<()>>,
+) -> Result<()> {
+    if let Some(h) = pen {
         h.join().unwrap();
     }
-    if let Some(h) = touch_handle {
+    if let Some(h) = touch {
         h.join().unwrap();
     }
-
     Ok(())
 }

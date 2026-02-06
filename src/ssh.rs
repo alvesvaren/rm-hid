@@ -1,7 +1,3 @@
-//! SSH connection to reMarkable and streaming from remote /dev/input.
-//! Auth via key file or password (user is always root).
-//! Optional UI pause: stop xochitl with kill -STOP so it doesn't see input; resume with kill -CONT.
-
 use std::net::TcpStream;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -10,41 +6,13 @@ use ssh2::Session;
 
 use crate::config::{Auth, Config};
 
-const USER: &str = "root";
-/// Shell command template that:
-/// 1. Sets up a trap to kill the stopper and resume xochitl (CONT) on exit
-/// 2. Spawns a background loop that keeps freezing xochitl with STOP (handles PID changes if watchdog restarts it)
-/// 3. Runs cat in foreground
-/// This approach doesn't write anything to disk. {} is the device path.
-const CAT_WITH_TRAP_CMD: &str = "trap 'kill $STOPPER 2>/dev/null; kill -CONT $(pidof xochitl) 2>/dev/null' EXIT; (while true; do kill -STOP $(pidof xochitl) 2>/dev/null; sleep 1; done) & STOPPER=$!; sleep 0.5; cat {}";
-/// Plain cat command for when stop_ui is not used.
-const CAT_CMD: &str = "cat {}";
-const XOCHITL_RESUME_CMD: &str = "kill -CONT $(pidof xochitl) 2>/dev/null";
+const SSH_USER: &str = "root";
+const SSH_PORT: u16 = 22;
 
-fn authenticate(sess: &mut Session, auth: &Auth) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    match auth {
-        Auth::Key(path) => {
-            sess.userauth_pubkey_file(USER, None, path.as_ref(), None)?;
-        }
-        Auth::Password(pass) => {
-            sess.userauth_password(USER, pass)?;
-        }
-    }
-    if !sess.authenticated() {
-        return Err("SSH auth failed".into());
-    }
-    Ok(())
-}
+const XOCHITL_STOP_LOOP: &str = "trap 'kill $STOPPER 2>/dev/null; kill -CONT $(pidof xochitl) 2>/dev/null' EXIT; (while true; do kill -STOP $(pidof xochitl) 2>/dev/null; sleep 1; done) & STOPPER=$!; sleep 0.5; cat {}";
+const XOCHITL_RESUME: &str = "kill -CONT $(pidof xochitl) 2>/dev/null";
 
-/// Resume the reMarkable UI (xochitl).
-pub fn resume_xochitl(config: &Config) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let cmd = format!("sh -c '{}'", XOCHITL_RESUME_CMD);
-    log::info!("Resuming xochitl (kill -CONT)…");
-    run_command(config, &cmd)?;
-    Ok(())
-}
-
-/// Guard that restarts xochitl when the last stream using stop_ui mode is dropped.
+/// Guard that resumes xochitl when the last stream using stop_ui mode is dropped.
 pub struct XochitlPauseGuard {
     config: Config,
     refcount: Arc<AtomicUsize>,
@@ -58,58 +26,45 @@ impl XochitlPauseGuard {
 
 impl Drop for XochitlPauseGuard {
     fn drop(&mut self) {
-        if self.refcount.fetch_sub(1, Ordering::SeqCst) == 1 {
-            if let Err(e) = resume_xochitl(&self.config) {
-                log::warn!("Resume xochitl: {}", e);
-            }
+        if self.refcount.fetch_sub(1, Ordering::SeqCst) != 1 {
+            return;
+        }
+
+        if let Err(e) = resume_xochitl(&self.config) {
+            log::warn!("Failed to resume xochitl: {}", e);
         }
     }
 }
 
-/// Connect to the reMarkable and run `cat` on the device. If stop_ui is true, stops xochitl
-/// with a shell trap that automatically resumes it when the connection dies for any reason
-/// (network timeout, Ctrl+C, laptop crash, etc.) - no cleanup needed on the host side.
-/// Returns (session, channel, optional guard). The guard provides backup resume on clean local exit.
+/// Open an SSH connection and stream input from a device.
 pub fn open_input_stream(
     device_path: &str,
     config: &Config,
     stop_ui: bool,
     pause_refcount: Option<Arc<AtomicUsize>>,
-) -> Result<(Session, ssh2::Channel, Option<XochitlPauseGuard>), Box<dyn std::error::Error + Send + Sync>> {
-    let auth = config.auth();
-    log::info!("SSH connecting to {}…", config.host);
-    let tcp = TcpStream::connect((config.host.as_str(), 22))?;
-    let mut sess = Session::new()?;
-    sess.set_tcp_stream(tcp);
-    sess.handshake()?;
-    authenticate(&mut sess, &auth)?;
-    let mut channel = sess.channel_session()?;
+) -> Result<(Session, ssh2::Channel, Option<XochitlPauseGuard>), Box<dyn std::error::Error + Send + Sync>>
+{
+    log::info!("Connecting to {}", config.host);
 
-    // Build the command: if stop_ui, use trap-based command that auto-restarts xochitl on exit
-    let cmd = if stop_ui {
-        log::info!("Using stop-ui mode with shell trap (auto-restart xochitl on connection loss)");
-        CAT_WITH_TRAP_CMD.replace("{}", device_path)
-    } else {
-        CAT_CMD.replace("{}", device_path)
-    };
+    let session = connect_and_authenticate(config)?;
+    let mut channel = session.channel_session()?;
 
-    // Create guard as backup for clean local exits (e.g., graceful shutdown)
+    let cmd = build_stream_command(device_path, stop_ui);
+    log::debug!("Executing: {}", cmd);
+
+    channel.exec(&cmd)?;
+    channel.handle_extended_data(ssh2::ExtendedData::Merge)?;
+
     let guard = if stop_ui {
-        let refcount = match &pause_refcount {
-            Some(r) => r.clone(),
-            None => Arc::new(AtomicUsize::new(0)),
-        };
+        let refcount = pause_refcount.unwrap_or_else(|| Arc::new(AtomicUsize::new(0)));
         refcount.fetch_add(1, Ordering::SeqCst);
         Some(XochitlPauseGuard::new(config.clone(), refcount))
     } else {
         None
     };
 
-    log::info!("SSH connected, running: {}", cmd);
-    channel.exec(&cmd)?;
-    channel.handle_extended_data(ssh2::ExtendedData::Merge)?;
-    log::info!("stream ready for {}", device_path);
-    Ok((sess, channel, guard))
+    log::info!("Stream ready for {}", device_path);
+    Ok((session, channel, guard))
 }
 
 /// Run a single command on the reMarkable.
@@ -117,18 +72,59 @@ pub fn run_command(
     config: &Config,
     command: &str,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let auth = config.auth();
-    let tcp = TcpStream::connect((config.host.as_str(), 22))?;
-    let mut sess = Session::new()?;
-    sess.set_tcp_stream(tcp);
-    sess.handshake()?;
-    authenticate(&mut sess, &auth)?;
-    let mut channel = sess.channel_session()?;
+    let session = connect_and_authenticate(config)?;
+    let mut channel = session.channel_session()?;
+
     channel.exec(command)?;
     channel.wait_close()?;
+
     let status = channel.exit_status().unwrap_or(-1);
     if status != 0 {
-        return Err(format!("command exited with status {}", status).into());
+        return Err(format!("Command exited with status {}", status).into());
     }
+
     Ok(())
+}
+
+fn connect_and_authenticate(config: &Config) -> Result<Session, Box<dyn std::error::Error + Send + Sync>> {
+    let tcp = TcpStream::connect((config.host.as_str(), SSH_PORT))?;
+    let mut session = Session::new()?;
+
+    session.set_tcp_stream(tcp);
+    session.handshake()?;
+
+    authenticate(&mut session, &config.auth())?;
+
+    Ok(session)
+}
+
+fn authenticate(session: &mut Session, auth: &Auth) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    match auth {
+        Auth::Key(path) => {
+            session.userauth_pubkey_file(SSH_USER, None, path.as_ref(), None)?;
+        }
+        Auth::Password(pass) => {
+            session.userauth_password(SSH_USER, pass)?;
+        }
+    }
+
+    if !session.authenticated() {
+        return Err("SSH authentication failed".into());
+    }
+
+    Ok(())
+}
+
+fn build_stream_command(device_path: &str, stop_ui: bool) -> String {
+    if stop_ui {
+        log::info!("Using stop-ui mode (xochitl will resume on disconnect)");
+        XOCHITL_STOP_LOOP.replace("{}", device_path)
+    } else {
+        format!("cat {}", device_path)
+    }
+}
+
+fn resume_xochitl(config: &Config) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    log::info!("Resuming xochitl");
+    run_command(config, &format!("sh -c '{}'", XOCHITL_RESUME))
 }
