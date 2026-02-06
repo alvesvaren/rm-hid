@@ -60,6 +60,9 @@ fn create_touchpad_device() -> Result<UinputDevice, Box<dyn std::error::Error + 
             evdevil::event::Key::BTN_LEFT,
             evdevil::event::Key::BTN_TOUCH,
             evdevil::event::Key::BTN_TOOL_FINGER,
+            evdevil::event::Key::BTN_TOOL_DOUBLETAP,
+            evdevil::event::Key::BTN_TOOL_TRIPLETAP,
+            evdevil::event::Key::BTN_TOOL_QUADTAP,
         ])?
         .build("reMarkable Touch")?;
     Ok(device)
@@ -191,7 +194,10 @@ fn run_mt(channel: &mut impl Read) -> Result<(), Box<dyn std::error::Error + Sen
                         evdevil::event::AbsEvent::new(Abs::Y, out_x).into(),
                     ])?;
                 }
-                // Emit after slot/ABS so libinput sees positions then touch state. BTN_TOOL_FINGER = sanity check; BTN_TOUCH = pointer motion/click.
+                // Emit after slot/ABS so libinput sees positions then touch state.
+                // BTN_TOOL_FINGER = sanity check; BTN_TOUCH = pointer motion/click.
+                // BTN_TOOL_DOUBLETAP/TRIPLETAP/QUADTAP = finger count for gesture detection (scroll, pinch, etc.).
+                let k = contact_count as u32;
                 w = w.write(&[
                     KeyEvent::new(
                         Key::BTN_TOOL_FINGER,
@@ -205,6 +211,33 @@ fn run_mt(channel: &mut impl Read) -> Result<(), Box<dyn std::error::Error + Sen
                     KeyEvent::new(
                         Key::BTN_TOUCH,
                         if finger_down {
+                            KeyState::PRESSED
+                        } else {
+                            KeyState::RELEASED
+                        },
+                    )
+                    .into(),
+                    KeyEvent::new(
+                        Key::BTN_TOOL_DOUBLETAP,
+                        if k >= 2 {
+                            KeyState::PRESSED
+                        } else {
+                            KeyState::RELEASED
+                        },
+                    )
+                    .into(),
+                    KeyEvent::new(
+                        Key::BTN_TOOL_TRIPLETAP,
+                        if k >= 3 {
+                            KeyState::PRESSED
+                        } else {
+                            KeyState::RELEASED
+                        },
+                    )
+                    .into(),
+                    KeyEvent::new(
+                        Key::BTN_TOOL_QUADTAP,
+                        if k >= 4 {
                             KeyState::PRESSED
                         } else {
                             KeyState::RELEASED
