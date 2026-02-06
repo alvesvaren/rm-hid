@@ -25,36 +25,66 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         }
     }
 
+    let touch_only = args.iter().any(|a| a == "--touch-only");
+    let pen_only = args.iter().any(|a| a == "--pen-only");
+    let run_pen = !touch_only;
+    let run_touch = !pen_only;
+
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
-    log::info!("rm-mouse starting (host={}, pen={}, touch={})", config::HOST, config::PEN_DEVICE, config::TOUCH_DEVICE);
+    log::info!(
+        "rm-mouse starting (host={}, pen={}, touch={})",
+        config::HOST,
+        if run_pen { config::PEN_DEVICE } else { "off" },
+        if run_touch { config::TOUCH_DEVICE } else { "off" }
+    );
 
     let key_path = Path::new(config::KEY_PATH);
-    let key_pen = key_path.to_path_buf();
-    let key_touch = key_path.to_path_buf();
 
-    let pen_handle = thread::spawn(move || {
-        loop {
-            log::info!("[pen] thread starting…");
-            if let Err(e) = pen::run(&key_pen) {
-                log::error!("[pen] {}", e);
-            }
-            log::warn!("[pen] disconnected, reconnecting in 2s…");
-            thread::sleep(Duration::from_secs(2));
-        }
-    });
-    let touch_handle = thread::spawn(move || {
-        loop {
-            log::info!("[touch] thread starting…");
-            if let Err(e) = touch::run(&key_touch) {
-                log::error!("[touch] {}", e);
-            }
-            log::warn!("[touch] disconnected, reconnecting in 2s…");
-            thread::sleep(Duration::from_secs(2));
-        }
-    });
+    if !run_pen && !run_touch {
+        eprintln!("Usage: {} [--pen-only] [--touch-only]", args.get(0).unwrap_or(&"rm-mouse".into()));
+        eprintln!("  Default: run both pen and touch. Use one flag to run only that input.");
+        std::process::exit(1);
+    }
 
-    pen_handle.join().unwrap();
-    touch_handle.join().unwrap();
+    let pen_handle = if run_pen {
+        let key_pen = key_path.to_path_buf();
+        Some(thread::spawn(move || {
+            loop {
+                log::info!("[pen] thread starting…");
+                if let Err(e) = pen::run(&key_pen) {
+                    log::error!("[pen] {}", e);
+                }
+                log::warn!("[pen] disconnected, reconnecting in 2s…");
+                thread::sleep(Duration::from_secs(2));
+            }
+        }))
+    } else {
+        None
+    };
+
+    let touch_handle = if run_touch {
+        let key_touch = key_path.to_path_buf();
+        Some(thread::spawn(move || {
+            loop {
+                log::info!("[touch] thread starting…");
+                if let Err(e) = touch::run(&key_touch) {
+                    log::error!("[touch] {}", e);
+                }
+                log::warn!("[touch] disconnected, reconnecting in 2s…");
+                thread::sleep(Duration::from_secs(2));
+            }
+        }))
+    } else {
+        None
+    };
+
+    if let Some(h) = pen_handle {
+        h.join().unwrap();
+    }
+    if let Some(h) = touch_handle {
+        h.join().unwrap();
+    }
+
     Ok(())
 }

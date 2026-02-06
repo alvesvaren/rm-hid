@@ -16,11 +16,18 @@ use crate::event::{
 };
 use crate::ssh;
 
-// reMarkable pen axis ranges from dumps: X/Y up to ~16600, tilt ±~7k, pressure 0..4k, distance 0..255
+// reMarkable digitizer ranges from pen_bounds dump: X 39..20892, Y 164..15725.
+// libinput requires resolution on X/Y to accept the device as a tablet (needed for Krita etc.).
 fn create_pen_device() -> Result<UinputDevice, Box<dyn std::error::Error + Send + Sync>> {
     let axes = [
-        AbsSetup::new(Abs::X, AbsInfo::new(0, 20000)),
-        AbsSetup::new(Abs::Y, AbsInfo::new(0, 20000)),
+        AbsSetup::new(
+            Abs::X,
+            AbsInfo::new(0, 21000).with_resolution(100), // units/mm, libinput requirement
+        ),
+        AbsSetup::new(
+            Abs::Y,
+            AbsInfo::new(0, 16000).with_resolution(100),
+        ),
         AbsSetup::new(Abs::PRESSURE, AbsInfo::new(0, 4095)),
         AbsSetup::new(Abs::DISTANCE, AbsInfo::new(0, 255)),
         AbsSetup::new(Abs::TILT_X, AbsInfo::new(-8192, 8192)),
