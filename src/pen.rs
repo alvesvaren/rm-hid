@@ -45,9 +45,12 @@ pub fn run(key_path: &Path) -> Result<(), Box<dyn std::error::Error + Send + Syn
     }
     log::info!("[pen] forwarding (move pen on tablet to see events)");
 
+    let btn_touch_code = Key::BTN_TOUCH.raw();
     let mut buf = [0u8; INPUT_EVENT_SIZE];
     let mut batch: Vec<InputEvent> = Vec::with_capacity(32);
+    let mut touch_down = false;
     let mut count: u64 = 0;
+
     loop {
         channel.read_exact(&mut buf)?;
         if let Some(ev) = parse_input_event(&buf) {
@@ -55,6 +58,20 @@ pub fn run(key_path: &Path) -> Result<(), Box<dyn std::error::Error + Send + Syn
             let code = ev.raw_code();
             batch.push(ev);
             if ty == EV_SYN && code == SYN_REPORT {
+                // reMarkable doesn't send BTN_TOUCH; derive from ABS_PRESSURE (dump: pressure only when touching).
+                let pressure = batch
+                    .iter()
+                    .filter(|e| e.event_type().raw() == EV_ABS && e.raw_code() == ABS_PRESSURE)
+                    .last()
+                    .map(|e| e.raw_value())
+                    .unwrap_or(0);
+                let now_touching = pressure > 0;
+                if now_touching != touch_down {
+                    let key_ev = key_event(btn_touch_code, if now_touching { 1 } else { 0 });
+                    batch.insert(0, key_ev);
+                }
+                touch_down = now_touching;
+
                 if count == 0 {
                     log::info!("[pen] first event batch (events are flowing)");
                 }

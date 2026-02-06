@@ -73,10 +73,14 @@ pub fn run(key_path: &Path) -> Result<(), Box<dyn std::error::Error + Send + Syn
                     }
                 } else if code == ABS_MT_TRACKING_ID {
                     if value >= 0 {
-                        contact_count += 1;
+                        if !slot_active[current_slot] {
+                            contact_count += 1;
+                        }
                         slot_active[current_slot] = true;
                     } else {
-                        contact_count = contact_count.saturating_sub(1);
+                        if slot_active[current_slot] {
+                            contact_count = contact_count.saturating_sub(1);
+                        }
                         slot_active[current_slot] = false;
                     }
                     let any_active = contact_count > 0;
