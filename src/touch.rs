@@ -11,18 +11,17 @@ use evdevil::InputProp;
 use crate::config::TOUCH_DEVICE;
 use crate::event::{
     key_event, parse_input_event, rel_event, ABS_MT_POSITION_X, ABS_MT_POSITION_Y, ABS_MT_SLOT,
-    ABS_MT_TRACKING_ID, EV_ABS, EV_KEY, EV_SYN, INPUT_EVENT_SIZE, REL_HWHEEL, REL_WHEEL, REL_X,
-    REL_Y, SYN_REPORT,
+    ABS_MT_TRACKING_ID, EV_ABS, EV_KEY, EV_SYN, INPUT_EVENT_SIZE, REL_X, REL_Y, SYN_REPORT,
 };
 use crate::ssh;
 
 fn create_touchpad_device() -> Result<UinputDevice, Box<dyn std::error::Error + Send + Sync>> {
     // Kernel uinput docs: virtual mouse must declare BTN_LEFT so REL_X/REL_Y move the cursor.
     // We only emit BTN_TOUCH for touch down/up; BTN_LEFT is never sent (avoids stuck-button).
-    // REL_WHEEL/REL_HWHEEL for two-finger scroll.
+    // REL only when single finger (best practice: no REL with 2+ fingers so OS can handle gestures).
     let device = UinputDevice::builder()?
         .with_props([InputProp::POINTER])?
-        .with_rel_axes([Rel::X, Rel::Y, Rel::WHEEL, Rel::HWHEEL])?
+        .with_rel_axes([Rel::X, Rel::Y])?
         .with_keys([Key::BTN_LEFT, Key::BTN_TOUCH])?
         .build("reMarkable Touch")?;
     Ok(device)
@@ -52,9 +51,6 @@ pub fn run(key_path: &Path) -> Result<(), Box<dyn std::error::Error + Send + Syn
     let mut primary_slot: Option<usize> = None; // slot we use for cursor (stable until it lifts)
     let mut last_primary_x: Option<i32> = None;
     let mut last_primary_y: Option<i32> = None;
-    // Two-finger scroll: centroid of all fingers last frame (for delta).
-    let mut last_centroid_x: Option<i64> = None;
-    let mut last_centroid_y: Option<i64> = None;
 
     let mut frame_contact_count = 0i32;
     let mut frame_current_slot: usize = 0;
@@ -133,42 +129,14 @@ pub fn run(key_path: &Path) -> Result<(), Box<dyn std::error::Error + Send + Syn
                     touch_down = false;
                 }
 
-                if contact_count >= 2 {
-                    // Two-finger scroll: centroid delta -> REL_WHEEL / REL_HWHEEL.
-                    let (sum_x, sum_y): (i64, i64) = (0..16)
-                        .filter(|&i| slot_active[i])
-                        .filter_map(|i| {
-                            slot_x[i].zip(slot_y[i]).map(|(a, b)| (a as i64, b as i64))
-                        })
-                        .fold((0i64, 0i64), |(sx, sy), (x, y)| (sx + x, sy + y));
-                    let n = contact_count as i64;
-                    if n > 0 {
-                        let cx = sum_x / n;
-                        let cy = sum_y / n;
-                        if let (Some(lx), Some(ly)) = (last_centroid_x, last_centroid_y) {
-                            let dx = (cx - lx).clamp(-200, 200);
-                            let dy = (cy - ly).clamp(-200, 200);
-                            // Finger up = scroll up (positive REL_WHEEL). Scale to ~1–2 ticks per small move.
-                            let wheel = (-dy / 30).clamp(-15, 15);
-                            let hwheel = (dx / 30).clamp(-15, 15);
-                            if wheel != 0 {
-                                out.push(rel_event(REL_WHEEL, wheel as i32));
-                            }
-                            if hwheel != 0 {
-                                out.push(rel_event(REL_HWHEEL, hwheel as i32));
-                            }
-                        }
-                        last_centroid_x = Some(cx);
-                        last_centroid_y = Some(cy);
-                    }
-                } else {
-                    last_centroid_x = None;
-                    last_centroid_y = None;
+                // Only send REL (cursor) when exactly one finger: let OS handle multi-touch gestures.
+                if contact_count == 1 {
                     if let Some(s) = primary_slot {
                         if let (Some(x), Some(y)) = (slot_x[s], slot_y[s]) {
                             if let (Some(px), Some(py)) = (last_primary_x, last_primary_y) {
-                                out.push(rel_event(REL_X, x - px));
-                                out.push(rel_event(REL_Y, y - py));
+                                // Device X/Y swapped for orientation: device X -> REL_Y, device Y -> REL_X.
+                                out.push(rel_event(REL_X, y - py));
+                                out.push(rel_event(REL_Y, x - px));
                             }
                             last_primary_x = Some(x);
                             last_primary_y = Some(y);
