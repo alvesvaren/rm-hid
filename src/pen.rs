@@ -1,8 +1,8 @@
 //! Forward reMarkable pen input to a uinput pen device.
 
 use std::io::Read;
-use std::path::Path;
 use std::time::Instant;
+
 
 use evdevil::event::{Abs, InputEvent, Key};
 use evdevil::uinput::{AbsSetup, UinputDevice};
@@ -11,7 +11,9 @@ use evdevil::Bus;
 use evdevil::InputId;
 use evdevil::InputProp;
 
-use crate::config::PEN_DEVICE;
+use std::sync::Arc;
+
+use crate::config::Config;
 use crate::event::{
     key_event, parse_input_event, ABS_PRESSURE, EV_ABS, EV_SYN, INPUT_EVENT_SIZE, SYN_REPORT,
 };
@@ -46,10 +48,13 @@ fn create_pen_device() -> Result<UinputDevice, Box<dyn std::error::Error + Send 
 }
 
 pub fn run(
-    key_path: &Path,
+    config: &Config,
     palm: Option<SharedPalmState>,
+    pause_refcount: Option<Arc<std::sync::atomic::AtomicUsize>>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let (_sess, mut channel) = ssh::open_input_stream(PEN_DEVICE, key_path)?;
+    let stop_ui = config.stop_ui;
+    let (_sess, mut channel, _pause_guard) =
+        ssh::open_input_stream(&config.pen_device, config, stop_ui, pause_refcount)?;
     log::info!("[pen] creating uinput device…");
     let device = create_pen_device()?;
     if let Ok(name) = device.sysname() {
@@ -66,7 +71,9 @@ pub fn run(
     let mut count: u64 = 0;
 
     loop {
-        channel.read_exact(&mut buf)?;
+        if let Err(e) = channel.read_exact(&mut buf) {
+            return Err(e.into());
+        }
         if let Some(ev) = parse_input_event(&buf) {
             let ty = ev.event_type().raw();
             let code = ev.raw_code();
