@@ -16,8 +16,8 @@ use super::event::{key_event, parse_input_event, ABS_PRESSURE, EV_ABS, EV_SYN, I
 
 fn create_pen_device(device: &DeviceProfile) -> Result<UinputDevice, Box<dyn std::error::Error + Send + Sync>> {
     let axes = [
-        AbsSetup::new(Abs::X, AbsInfo::new(0, device.pen_x_max).with_resolution(100)),
-        AbsSetup::new(Abs::Y, AbsInfo::new(0, device.pen_y_max).with_resolution(100)),
+        AbsSetup::new(Abs::X, AbsInfo::new(device.pen_x_min, device.pen_x_max).with_resolution(100)),
+        AbsSetup::new(Abs::Y, AbsInfo::new(device.pen_y_min, device.pen_y_max).with_resolution(100)),
         AbsSetup::new(Abs::PRESSURE, AbsInfo::new(0, device.pen_pressure_max)),
         AbsSetup::new(Abs::DISTANCE, AbsInfo::new(0, device.pen_distance_max)),
         AbsSetup::new(Abs::TILT_X, AbsInfo::new(-device.pen_tilt_range, device.pen_tilt_range)),

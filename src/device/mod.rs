@@ -9,7 +9,9 @@ pub struct DeviceProfile {
     pub name: &'static str,
 
     // Pen digitizer ranges
+    pub pen_x_min: i32,
     pub pen_x_max: i32,
+    pub pen_y_min: i32,
     pub pen_y_max: i32,
     pub pen_pressure_max: i32,
     pub pen_distance_max: i32,
