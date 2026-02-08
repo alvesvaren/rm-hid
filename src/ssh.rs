@@ -35,7 +35,6 @@ pub fn open_input_stream(
     log::debug!("Executing: {}", cmd);
 
     channel.exec(&cmd)?;
-    channel.handle_extended_data(ssh2::ExtendedData::Merge)?;
 
     log::info!("Stream ready for {}", device_path);
     Ok((session, channel))

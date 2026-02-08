@@ -99,8 +99,12 @@ pub fn upload_helper(
 
 /// Build the remote command that grabs a device and streams events.
 ///
+/// Stderr is redirected to a log file on the tablet for diagnostics.
 /// Uses `exec` to replace the shell with the grab helper so that signal
 /// delivery (on SSH disconnect) goes directly to the right process.
 pub fn grab_command(device_path: &str) -> String {
-    format!("exec {} {}", REMOTE_PATH, device_path)
+    format!(
+        "exec {} {} 2>>{}.log",
+        REMOTE_PATH, device_path, REMOTE_PATH
+    )
 }
