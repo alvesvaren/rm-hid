@@ -17,7 +17,7 @@ fn run_dump(
     device: &str,
     name: &str,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let (_sess, mut channel) = ssh::open_input_stream(device, config, false)?;
+    let (_cleanup, mut channel) = ssh::open_input_stream(device, config, false)?;
 
     eprintln!("Dumping {} events from {} (Ctrl+C to stop)\n", name, device);
 

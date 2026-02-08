@@ -5,6 +5,42 @@ use ssh2::Session;
 use crate::config::{Auth, Config};
 use crate::grab;
 
+/// Guard that ensures remote grab processes are killed when dropped.
+pub struct GrabCleanup {
+    session: Option<Session>,
+    grab_enabled: bool,
+}
+
+impl GrabCleanup {
+    pub fn new(session: Session, grab_enabled: bool) -> Self {
+        Self {
+            session: Some(session),
+            grab_enabled,
+        }
+    }
+
+    pub fn session(&self) -> &Session {
+        self.session.as_ref().unwrap()
+    }
+
+    pub fn into_session(mut self) -> Session {
+        self.session.take().unwrap()
+    }
+}
+
+impl Drop for GrabCleanup {
+    fn drop(&mut self) {
+        if self.grab_enabled {
+            if let Some(ref session) = self.session {
+                // Try to kill processes, but don't panic if it fails
+                if let Err(e) = grab::kill_existing_processes(session) {
+                    log::debug!("Failed to kill grab processes on cleanup: {}", e);
+                }
+            }
+        }
+    }
+}
+
 const SSH_USER: &str = "root";
 const SSH_PORT: u16 = 22;
 
@@ -20,7 +56,7 @@ pub fn open_input_stream(
     device_path: &str,
     config: &Config,
     grab: bool,
-) -> Result<(Session, ssh2::Channel), Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<(GrabCleanup, ssh2::Channel), Box<dyn std::error::Error + Send + Sync>> {
     log::info!("Connecting to {}", config.host);
 
     let session = connect_and_authenticate(config)?;
@@ -37,7 +73,7 @@ pub fn open_input_stream(
     channel.exec(&cmd)?;
 
     log::info!("Stream ready for {}", device_path);
-    Ok((session, channel))
+    Ok((GrabCleanup::new(session, grab), channel))
 }
 
 fn connect_and_authenticate(
@@ -76,10 +112,14 @@ fn authenticate(
 
 /// Detect the tablet architecture and upload the grab helper via SFTP.
 fn prepare_grab(session: &Session) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    // Kill any existing rm-mouse-grab processes before starting a new one
+    grab::kill_existing_processes(session)?;
+
     let arch = grab::detect_arch(session)?;
     log::info!("Detected tablet architecture: {}", arch);
 
-    grab::upload_helper(session, arch)?;
+    // Ensure binary exists and matches our embedded version
+    grab::ensure_binary_valid(session, arch)?;
     Ok(())
 }
 

@@ -44,7 +44,7 @@ pub fn run_pen(
     device_profile: &DeviceProfile,
     palm: Option<SharedPalmState>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let (_sess, mut channel) =
+    let (_cleanup, mut channel) =
         ssh::open_input_stream(&config.pen_device, config, config.stop_ui)?;
 
     log::info!("Creating pen uinput device");
