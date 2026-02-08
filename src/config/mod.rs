@@ -74,7 +74,7 @@ impl Config {
             return Auth::Password(password.clone());
         }
         let path = self.key_path.as_deref().unwrap_or("rm-key");
-        Auth::Key(PathBuf::from(path))
+        Auth::Key(expand_tilde(path))
     }
 
     pub fn run_pen(&self) -> bool {
@@ -94,4 +94,18 @@ impl Config {
         }
         Ok(())
     }
+}
+
+/// Expand a leading `~` or `~/` to the user's home directory.
+fn expand_tilde(path: &str) -> PathBuf {
+    if path == "~" {
+        if let Ok(home) = std::env::var("HOME") {
+            return PathBuf::from(home);
+        }
+    } else if let Some(rest) = path.strip_prefix("~/") {
+        if let Ok(home) = std::env::var("HOME") {
+            return PathBuf::from(home).join(rest);
+        }
+    }
+    PathBuf::from(path)
 }
