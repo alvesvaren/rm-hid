@@ -21,23 +21,16 @@ build() {
 }
 
 package() {
-  # Git source extracts to directory matching repo name, find it dynamically
-  local srcdir_name=$(basename "$(ls -d "$srcdir"/*/ | head -1)")
-  local sourcedir="$srcdir/$srcdir_name"
-  
-  # Install binary (target is in $srcdir/target due to CARGO_TARGET_DIR)
+  cd "$srcdir"/*/
+
   install -Dm755 "$srcdir/target/release/rm-pad" "$pkgdir/usr/bin/rm-pad"
-  
-  # Install udev rules
-  install -Dm644 "$sourcedir/data/50-uinput.rules" "$pkgdir/usr/lib/udev/rules.d/50-uinput.rules"
-  install -Dm644 "$sourcedir/data/70-rm-pad.rules" "$pkgdir/usr/lib/udev/rules.d/70-rm-pad.rules"
-  
-  # Install systemd user service
-  install -Dm644 "$sourcedir/data/rm-pad@.service" "$pkgdir/usr/lib/systemd/user/rm-pad@.service"
-  
-  # Install example config
-  install -Dm644 "$sourcedir/rm-pad.toml.example" "$pkgdir/usr/share/rm-pad/rm-pad.toml.example"
-  
-  # Install documentation
-  install -Dm644 "$sourcedir/README.md" "$pkgdir/usr/share/doc/rm-pad/README.md"
+
+  install -Dm644 data/50-uinput.rules "$pkgdir/usr/lib/udev/rules.d/50-uinput.rules"
+  install -Dm644 data/70-rm-pad.rules "$pkgdir/usr/lib/udev/rules.d/70-rm-pad.rules"
+
+  install -Dm644 data/rm-pad@.service "$pkgdir/usr/lib/systemd/user/rm-pad@.service"
+
+  install -Dm644 rm-pad.toml.example "$pkgdir/usr/share/rm-pad/rm-pad.toml.example"
+
+  install -Dm644 README.md "$pkgdir/usr/share/doc/rm-pad/README.md"
 }

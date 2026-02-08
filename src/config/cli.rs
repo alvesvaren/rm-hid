@@ -39,7 +39,7 @@ pub struct Cli {
     #[arg(long)]
     pub pen_only: bool,
 
-    /// Grab input exclusively (prevents tablet UI from seeing input)
+    /// Grab input exclusively [default: true]
     #[arg(long)]
     pub grab_input: bool,
 

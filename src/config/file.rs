@@ -5,7 +5,7 @@ use crate::orientation::Orientation;
 
 const DEFAULT_HOST: &str = "10.11.99.1";
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FileConfig {
     #[serde(default = "default_host")]
@@ -18,7 +18,7 @@ pub struct FileConfig {
     pub touch_only: bool,
     #[serde(default)]
     pub pen_only: bool,
-    #[serde(default)]
+    #[serde(default = "default_true")]
     pub grab_input: bool,
     #[serde(default)]
     pub no_palm_rejection: bool,
@@ -27,8 +27,30 @@ pub struct FileConfig {
     pub orientation: Orientation,
 }
 
+impl Default for FileConfig {
+    fn default() -> Self {
+        Self {
+            host: DEFAULT_HOST.into(),
+            grab_input: true,
+            key_path: None,
+            password: None,
+            pen_device: None,
+            touch_device: None,
+            touch_only: false,
+            pen_only: false,
+            no_palm_rejection: false,
+            palm_grace_ms: None,
+            orientation: Orientation::default(),
+        }
+    }
+}
+
 fn default_host() -> String {
     DEFAULT_HOST.into()
+}
+
+fn default_true() -> bool {
+    true
 }
 
 pub fn load_from_path(path: &Path) -> Option<FileConfig> {
