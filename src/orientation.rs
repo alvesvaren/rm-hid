@@ -132,8 +132,8 @@ mod tests {
         let portrait = Orientation::Portrait;
         let landscape = Orientation::LandscapeRight;
         
-        assert_eq!(portrait.output_dimensions(100, 200), (100, 200));
-        assert_eq!(landscape.output_dimensions(100, 200), (200, 100));
+        assert_eq!(portrait.touch_output_dimensions(100, 200), (100, 200));
+        assert_eq!(landscape.touch_output_dimensions(100, 200), (200, 100));
     }
 
     #[test]

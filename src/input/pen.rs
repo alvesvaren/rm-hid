@@ -1,6 +1,4 @@
 use std::io::Read;
-use std::sync::atomic::AtomicUsize;
-use std::sync::Arc;
 use std::time::Instant;
 
 use evdevil::event::{Abs, InputEvent, Key};
@@ -45,10 +43,9 @@ pub fn run_pen(
     config: &Config,
     device_profile: &DeviceProfile,
     palm: Option<SharedPalmState>,
-    pause_refcount: Option<Arc<AtomicUsize>>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let (_sess, mut channel, _pause_guard) =
-        ssh::open_input_stream(&config.pen_device, config, config.stop_ui, pause_refcount)?;
+    let (_sess, mut channel) =
+        ssh::open_input_stream(&config.pen_device, config, config.stop_ui)?;
 
     log::info!("Creating pen uinput device");
     let uinput = create_pen_device(device_profile, config.orientation)?;
