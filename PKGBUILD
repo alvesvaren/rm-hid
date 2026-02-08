@@ -1,6 +1,6 @@
 # Maintainer: Your Name <your.email@example.com>
 pkgname=rm-pad
-pkgver=0.1.1
+pkgver=0.1.2
 pkgrel=1
 pkgdesc="Forward reMarkable tablet input to your computer as libinput devices"
 arch=('x86_64')
@@ -15,13 +15,12 @@ build() {
   # Build from source - cargo build will run build.rs which cross-compiles ARM helper binaries
   # Set CARGO_TARGET_DIR to avoid picking up parent Cargo.toml
   export CARGO_TARGET_DIR="$srcdir/target"
-  # Git source extracts to directory matching repo name, find it dynamically
-  cd "$srcdir"/*/
+  cd "$srcdir/rm-pad"
   cargo build --release --locked
 }
 
 package() {
-  cd "$srcdir"/*/
+  cd "$srcdir/rm-pad"
 
   install -Dm755 "$srcdir/target/release/rm-pad" "$pkgdir/usr/bin/rm-pad"
 
