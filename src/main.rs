@@ -1,12 +1,12 @@
 mod config;
 mod device;
 mod dump;
+mod grab;
 mod input;
 mod orientation;
 mod palm;
 mod ssh;
 
-use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
@@ -66,7 +66,7 @@ fn log_startup_info(config: &Config) {
     };
 
     log::info!(
-        "Starting rm-mouse: host={}, pen={}, touch={}, palm_rejection={}, stop_ui={}, orientation={}",
+        "Starting rm-pad: host={}, pen={}, touch={}, palm_rejection={}, stop_ui={}, orientation={}",
         config.host,
         if config.run_pen() { &config.pen_device } else { "off" },
         if config.run_touch() { &config.touch_device } else { "off" },
@@ -78,11 +78,10 @@ fn log_startup_info(config: &Config) {
 
 fn run_input_forwarding(config: Config, device: &'static DeviceProfile) -> Result<()> {
     let palm_state = create_palm_state(&config);
-    let pause_refcount = create_pause_refcount(&config);
     let config = Arc::new(config);
 
-    let pen_handle = spawn_pen_thread(&config, device, &palm_state, &pause_refcount);
-    let touch_handle = spawn_touch_thread(&config, device, &palm_state, &pause_refcount);
+    let pen_handle = spawn_pen_thread(&config, device, &palm_state);
+    let touch_handle = spawn_touch_thread(&config, device, &palm_state);
 
     join_threads(pen_handle, touch_handle)
 }
@@ -98,22 +97,10 @@ fn create_palm_state(config: &Config) -> Option<SharedPalmState> {
     Some(Arc::new(std::sync::Mutex::new(PalmState::new())))
 }
 
-fn create_pause_refcount(config: &Config) -> Option<Arc<AtomicUsize>> {
-    if !config.stop_ui {
-        return None;
-    }
-    if !config.run_pen() && !config.run_touch() {
-        return None;
-    }
-
-    Some(Arc::new(AtomicUsize::new(0)))
-}
-
 fn spawn_pen_thread(
     config: &Arc<Config>,
     device: &'static DeviceProfile,
     palm_state: &Option<SharedPalmState>,
-    pause_refcount: &Option<Arc<AtomicUsize>>,
 ) -> Option<thread::JoinHandle<()>> {
     if !config.run_pen() {
         return None;
@@ -121,11 +108,10 @@ fn spawn_pen_thread(
 
     let config = config.clone();
     let palm = palm_state.clone();
-    let pause = pause_refcount.clone();
 
     Some(thread::spawn(move || {
         run_with_reconnect("pen", || {
-            input::run_pen(&config, device, palm.clone(), pause.clone())
+            input::run_pen(&config, device, palm.clone())
         });
     }))
 }
@@ -134,7 +120,6 @@ fn spawn_touch_thread(
     config: &Arc<Config>,
     device: &'static DeviceProfile,
     palm_state: &Option<SharedPalmState>,
-    pause_refcount: &Option<Arc<AtomicUsize>>,
 ) -> Option<thread::JoinHandle<()>> {
     if !config.run_touch() {
         return None;
@@ -142,11 +127,10 @@ fn spawn_touch_thread(
 
     let config = config.clone();
     let palm = palm_state.clone();
-    let pause = pause_refcount.clone();
 
     Some(thread::spawn(move || {
         run_with_reconnect("touch", || {
-            input::run_touch(&config, device, palm.clone(), pause.clone())
+            input::run_touch(&config, device, palm.clone())
         });
     }))
 }

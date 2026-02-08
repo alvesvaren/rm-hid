@@ -1,6 +1,4 @@
 use std::io::Read;
-use std::sync::atomic::AtomicUsize;
-use std::sync::Arc;
 use std::time::Duration;
 
 use evdevil::event::{Abs, Key, KeyEvent, KeyState};
@@ -126,10 +124,9 @@ pub fn run_touch(
     config: &Config,
     device_profile: &DeviceProfile,
     palm: Option<SharedPalmState>,
-    pause_refcount: Option<Arc<AtomicUsize>>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let (_sess, mut channel, _pause_guard) =
-        ssh::open_input_stream(&config.touch_device, config, config.stop_ui, pause_refcount)?;
+    let (_cleanup, mut channel) =
+        ssh::open_input_stream(&config.touch_device, config, config.stop_ui)?;
 
     log::info!("Creating touch uinput device");
     let uinput = create_touchpad_device(device_profile, config.orientation)?;

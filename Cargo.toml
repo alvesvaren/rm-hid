@@ -1,5 +1,5 @@
 [package]
-name = "rm-mouse"
+name = "rm-pad"
 version = "0.1.0"
 edition = "2021"
 
@@ -9,5 +9,6 @@ env_logger = "0.11"
 evdevil = "0.4.0"
 log = "0.4"
 serde = { version = "1.0", features = ["derive"] }
+sha2 = "0.10"
 ssh2 = "0.9.5"
 toml = "0.8"

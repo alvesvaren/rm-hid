@@ -4,9 +4,7 @@ pub const RM2: DeviceProfile = DeviceProfile {
     name: "reMarkable 2",
 
     // Pen digitizer ranges (from device dumps)
-    pen_x_min: 0,
     pen_x_max: 20966,
-    pen_y_min: 0,
     pen_y_max: 15725,
     pen_pressure_max: 4095,
     pen_distance_max: 255,
