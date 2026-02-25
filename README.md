@@ -1,6 +1,6 @@
 # rm-pad
 
-This is a simple program that takes input from a reMarkable tablet (only for rm2 right now) and converts it into libinput devices. This project only works on linux, and is only tested on wayland.
+This is a simple program that takes input from a reMarkable tablet (only for rm2 right now, might work on rmpp and rmpm too but untested) and converts it into libinput devices. This project only works on linux, and is only tested on wayland.
 
 Features:
 - Pen input (position, pressure and tilt)
