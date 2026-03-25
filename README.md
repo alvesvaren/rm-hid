@@ -136,3 +136,7 @@ For debugging, use the dump command:
 rm-pad dump touch  # Dump raw touch events
 rm-pad dump pen    # Dump raw pen events
 ```
+
+## Disclaimer
+
+This is software I've wanted myself, and this is in large part AI generated. Initially I wanted to just build a POC, but it turned out well enough to where I don't see the need to rewrite it
